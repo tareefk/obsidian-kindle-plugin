@@ -246,7 +246,6 @@ export default class FileManager {
     highlightsCount: number
   ): Promise<void> {
     const filePath = normalizePath(bookFilePath(book, metadata));
-    const frontmatterContent = this.generateBookContent(book, content, highlightsCount);
 
     // A file can already exist at this book's canonical path even though it wasn't found by its
     // stored bookId (e.g. Obsidian's metadata cache hasn't caught up with a recent write yet, or
@@ -256,6 +255,13 @@ export default class FileManager {
 
     if (existingFile instanceof TFile) {
       try {
+        const existingContent = await this.vault.cachedRead(existingFile);
+        const frontmatterContent = this.generateBookContent(
+          book,
+          content,
+          highlightsCount,
+          existingContent
+        );
         await this.vault.modify(existingFile, frontmatterContent);
         await this.waitForMetadataCache(existingFile);
       } catch (error) {
@@ -266,6 +272,7 @@ export default class FileManager {
     }
 
     try {
+      const frontmatterContent = this.generateBookContent(book, content, highlightsCount);
       const createdFile = await this.vault.create(filePath, frontmatterContent);
       await this.waitForMetadataCache(createdFile);
     } catch (error) {
@@ -296,11 +303,25 @@ export default class FileManager {
    * (b) rendered book highlights
    * Uses flat properties format compatible with Obsidian's properties system
    */
-  private generateBookContent(book: Book, content: string, highlightsCount: number): string {
+  private generateBookContent(
+    book: Book,
+    content: string,
+    highlightsCount: number,
+    preserveFrontmatterFrom?: string
+  ): string {
     // lastChecked always means "the plugin wrote this file just now" - it's our own bookkeeping,
     // not something scraped from Amazon, so it's stamped fresh on every write rather than carried
     // over from whatever was on the book object passed in.
     const frontmatter = bookToFrontMatter({ ...book, lastChecked: new Date() }, highlightsCount);
+
+    // When rewriting a file we found by path rather than by id (see createFile), `content` is a
+    // freshly rendered body with no frontmatter of its own. Carrying over any frontmatter that
+    // already existed on disk - including fields the plugin knows nothing about, like a user's
+    // own rating or genre - before merging in the plugin's own fields, so a lookup miss can't
+    // silently discard someone's own data along with fixing the duplicate.
+    const baseContent = preserveFrontmatterFrom
+      ? matter.stringify(content, matter(preserveFrontmatterFrom).data)
+      : content;
 
     // Use flat properties format for better Obsidian compatibility
     const flatProperties: Record<string, any> = {
@@ -324,7 +345,7 @@ export default class FileManager {
     
     // Strip any stale legacy nested block so it can't keep shadowing these freshly-written flat
     // properties on a future read (see the priority comment in mapToKindleFile)
-    return mergeFrontmatter(content, flatProperties, [SyncingStateKey]);
+    return mergeFrontmatter(baseContent, flatProperties, [SyncingStateKey]);
   }
 
   /**
