@@ -7,6 +7,8 @@ import { settingsStore } from '~/store';
 import { mergeFrontmatter } from '~/utils';
 
 import { bookFilePath, bookToFrontMatter, frontMatterToBook } from './mappers';
+import type { DuplicateCandidate } from './selectCanonicalDuplicate';
+import { pickBetterDuplicate } from './selectCanonicalDuplicate';
 
 const SyncingStateKey = 'kindle-sync';
 const PropertyPrefix = 'kindle-';
@@ -55,9 +57,33 @@ export default class FileManager {
   public getKindleFile(book: Book): KindleFile | undefined {
     const allSyncedFiles = this.getKindleFiles();
 
-    const kindleFile = allSyncedFiles.find((file) => file.frontmatter.bookId === book.id);
+    const matches = allSyncedFiles.filter((file) => file.frontmatter.bookId === book.id);
 
-    return kindleFile == null ? undefined : { ...kindleFile, book };
+    if (matches.length === 0) {
+      return undefined;
+    }
+
+    // Under normal operation there's exactly one match. If a duplicate ever exists anyway (a
+    // leftover from a bug, a sync interrupted mid-write), pick deterministically instead of
+    // depending on vault enumeration order - otherwise different syncs can read and write
+    // different copies of "the same" book, which never converges.
+    const asDuplicateCandidate = (kindleFile: KindleFile): DuplicateCandidate => ({
+      path: kindleFile.file.path,
+      highlightsCount: kindleFile.frontmatter.highlightsCount,
+      createdAt: kindleFile.file.stat.ctime,
+    });
+
+    const kindleFile =
+      matches.length === 1
+        ? matches[0]
+        : matches.reduce((best, candidate) =>
+            pickBetterDuplicate(asDuplicateCandidate(best), asDuplicateCandidate(candidate)).path ===
+            best.file.path
+              ? best
+              : candidate
+          );
+
+    return { ...kindleFile, book };
   }
 
   public mapToKindleFile(fileOrFolder: TAbstractFile): KindleFile | undefined {
