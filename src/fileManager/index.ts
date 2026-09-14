@@ -18,6 +18,40 @@ export default class FileManager {
     return await this.vault.cachedRead(file.file);
   }
 
+  /**
+   * Waits for Obsidian's metadataCache to actually reprocess a file we just wrote, instead of
+   * guessing with a fixed delay. Every read in this file (getKindleFiles/mapToKindleFile) goes
+   * through that same cache, so a fixed delay that's too short leaves a window where the very
+   * next sync reads pre-write frontmatter - which looks identical to "we never checked this book"
+   * and makes it look permanently stale no matter how many times it's actually corrected on disk.
+   * Falls back to a timeout so a write that Obsidian never reports as changed (e.g. no actual
+   * byte difference) can't hang the sync.
+   */
+  private waitForMetadataCache(file: TFile, timeoutMs = 5000): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const finish = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutHandle);
+        this.metadataCache.off('changed', onChanged);
+        resolve();
+      };
+
+      const onChanged = (changedFile: TFile): void => {
+        if (changedFile.path === file.path) {
+          finish();
+        }
+      };
+
+      this.metadataCache.on('changed', onChanged);
+      const timeoutHandle = setTimeout(finish, timeoutMs);
+    });
+  }
+
   public getKindleFile(book: Book): KindleFile | undefined {
     const allSyncedFiles = this.getKindleFiles();
 
@@ -197,7 +231,7 @@ export default class FileManager {
     if (existingFile instanceof TFile) {
       try {
         await this.vault.modify(existingFile, frontmatterContent);
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await this.waitForMetadataCache(existingFile);
       } catch (error) {
         console.error(`Error updating existing file (path="${filePath})"`);
         throw error;
@@ -206,10 +240,8 @@ export default class FileManager {
     }
 
     try {
-      await this.vault.create(filePath, frontmatterContent);
-      // Give Obsidian time to process the new file and update metadata cache
-      // This helps prevent performance issues when syncing many books
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      const createdFile = await this.vault.create(filePath, frontmatterContent);
+      await this.waitForMetadataCache(createdFile);
     } catch (error) {
       console.error(`Error writing new file (path="${filePath})"`);
       throw error;
@@ -226,9 +258,7 @@ export default class FileManager {
 
     try {
       await this.vault.modify(kindleFile.file, frontmatterContent);
-      // Give Obsidian time to process the file update and update metadata cache
-      // This helps prevent performance issues when syncing many books
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await this.waitForMetadataCache(kindleFile.file);
     } catch (error) {
       console.error(`Error modifying e file (path="${kindleFile.file.path})"`);
       throw error;
