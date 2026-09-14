@@ -40,9 +40,10 @@ export default class SyncManager {
     const file = this.fileManager.getKindleFile(book);
 
     if (file == null) {
-      if (highlights.length === 0) {
-        return; // Nothing to create yet
-      }
+      // Still create a file even with zero highlights - a book with no note has no lastChecked
+      // to compare against, so it looks "new" again on every single sync, forever, exactly like
+      // the bugs fixed elsewhere in this codebase. Recording that we checked it (even if there's
+      // nothing to show yet) is what lets it drop out of the diff once confirmed empty.
       await this.createBook(book, highlights);
     } else {
       await this.resyncBook(file, book, highlights);
