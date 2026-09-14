@@ -17,14 +17,12 @@ export default class SyncManager {
   }
 
   public filterBooksToSync(remoteBooks: Book[]): Book[] {
-    const lastSyncDate = get(settingsStore).lastSyncDate;
     const ignoredBooks = get(settingsStore).ignoredBooks ?? [];
     const vaultBooks = this.fileManager.getKindleFiles();
 
     const booksToSync = diffBooks(
       remoteBooks,
-      vaultBooks.map((v) => v.book),
-      lastSyncDate
+      vaultBooks.map((v) => v.book)
     );
 
     if (ignoredBooks.length === 0) {
@@ -39,13 +37,12 @@ export default class SyncManager {
   }
 
   public async syncBook(book: Book, highlights: Highlight[]): Promise<void> {
-    if (highlights.length === 0) {
-      return; // No highlights for book. Skip sync
-    }
-
     const file = this.fileManager.getKindleFile(book);
 
     if (file == null) {
+      if (highlights.length === 0) {
+        return; // Nothing to create yet
+      }
       await this.createBook(book, highlights);
     } else {
       await this.resyncBook(file, book, highlights);
@@ -61,9 +58,9 @@ export default class SyncManager {
 
     const diffs = diffManager.diff(remoteHighlights);
 
-    if (diffs.length > 0) {
-      await diffManager.applyDiffs(remoteBook, remoteHighlights, diffs);
-    }
+    // Always write, even with zero diffs - this is what stamps lastChecked with today's date, so
+    // a book we just confirmed is unchanged doesn't look perpetually stale to diffBooks
+    await diffManager.applyDiffs(remoteBook, remoteHighlights, diffs);
 
     return diffs;
   }
