@@ -4,7 +4,7 @@ import { get } from 'svelte/store';
 
 import type { Book, BookMetadata, KindleFile, KindleFrontmatter } from '~/models';
 import { settingsStore } from '~/store';
-import { mergeFrontmatter } from '~/utils';
+import { mergeFrontmatter, withRetry } from '~/utils';
 
 import { bookFilePath, bookToFrontMatter, frontMatterToBook } from './mappers';
 import type { DuplicateCandidate } from './selectCanonicalDuplicate';
@@ -17,7 +17,10 @@ export default class FileManager {
   constructor(private vault: Vault, private metadataCache: MetadataCache) {}
 
   public async readFile(file: KindleFile): Promise<string> {
-    return await this.vault.cachedRead(file.file);
+    // Reading from a cloud-synced vault (iCloud Drive, Dropbox, ...) can transiently time out if
+    // the file was evicted locally and needs to be fetched on demand, especially under the heavy,
+    // rapid I/O of syncing a large library. Retry a few times before giving up on this book.
+    return await withRetry(() => this.vault.cachedRead(file.file));
   }
 
   /**
@@ -255,7 +258,7 @@ export default class FileManager {
 
     if (existingFile instanceof TFile) {
       try {
-        const existingContent = await this.vault.cachedRead(existingFile);
+        const existingContent = await withRetry(() => this.vault.cachedRead(existingFile));
         const frontmatterContent = this.generateBookContent(
           book,
           content,
