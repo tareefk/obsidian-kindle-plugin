@@ -58,6 +58,7 @@ export const loadRemoteDom = async (
   return new Promise<DomResult>((resolveWrapper, rejectWrapper) => {
     let didNavigateUrl: string = null;
     let settled = false;
+    let lastLoggedCount: number | undefined;
 
     const settle = (fn: () => void): void => {
       if (settled) {
@@ -126,8 +127,13 @@ export const loadRemoteDom = async (
               {
                 ...scrollOptions,
                 onProgress: (count) => {
-                  if (shouldLog) {
+                  // scrollUntilStable reports every attempt, including the repeated identical
+                  // reads it needs to confirm the count has actually stopped growing - logging
+                  // every one of those just prints the same number several times in a row with
+                  // nothing visibly happening. Only log when the count actually changes.
+                  if (shouldLog && count !== lastLoggedCount) {
                     ee.emit('syncLog', `${labelPrefix}Found ${count} item(s) so far…`);
+                    lastLoggedCount = count;
                   }
                   scrollOptions.onProgress?.(count);
                 },
